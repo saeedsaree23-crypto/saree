@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Phone, MessageCircle, MapPin, Clock, User } from 'lucide-react';
+import { Phone, MessageCircle, MapPin, Clock, User, Navigation, Copy, Share } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { makePhoneCall, openWhatsApp } from './PermissionsManager';
 
@@ -90,11 +90,15 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
     'لقد تغير العنوان',
     'سأنتظرك في المدخل',
     'المبنى رقم كم؟',
-    'اتصل بي عند الوصول'
+    'اتصل بي عند الوصول',
+    'هل تحتاج مساعدة في العثور على المكان؟',
+    'أنا في الطريق إليك',
+    'وصلت إلى المنطقة، أين المبنى؟',
+    'شكراً لك، تم التسليم بنجاح'
   ];
 
   return (
-    <Card className="border-2 border-primary/20">
+    <Card className="border-2 border-primary/20 bg-gradient-to-r from-blue-50 to-green-50">
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -115,7 +119,19 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">رقم الهاتف:</span>
-            <span className="font-medium">{driver.phone}</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{driver.phone}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(driver.phone);
+                  toast({ title: "تم نسخ رقم الهاتف" });
+                }}
+              >
+                <Copy className="h-3 w-3" />
+              </Button>
+            </div>
           </div>
           {driver.currentLocation && (
             <div className="flex items-center justify-between">
@@ -128,11 +144,11 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
           )}
         </div>
 
-        {/* Communication Buttons */}
-        <div className="grid grid-cols-2 gap-2">
+        {/* Communication Buttons محسنة */}
+        <div className="grid grid-cols-2 gap-3">
           <Button
             onClick={handlePhoneCall}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
             data-testid="call-driver-button"
           >
             <Phone className="h-4 w-4" />
@@ -142,8 +158,7 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
               <Button 
-                variant="outline" 
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
                 data-testid="whatsapp-driver-button"
               >
                 <MessageCircle className="h-4 w-4" />
@@ -162,7 +177,7 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
                 {/* Quick Messages */}
                 <div>
                   <h4 className="text-sm font-medium mb-2">الرسائل السريعة:</h4>
-                  <div className="grid grid-cols-1 gap-2">
+                  <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto">
                     {quickMessages.map((message, index) => (
                       <Button
                         key={index}
@@ -202,9 +217,50 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
           </Dialog>
         </div>
 
+        {/* أزرار إضافية */}
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const shareData = {
+                title: `طلب رقم ${orderNumber}`,
+                text: `تفاصيل الطلب من ${driver.name}`,
+                url: window.location.href
+              };
+              
+              if (navigator.share) {
+                navigator.share(shareData);
+              } else {
+                navigator.clipboard.writeText(window.location.href);
+                toast({ title: "تم نسخ رابط الطلب" });
+              }
+            }}
+            className="gap-2"
+          >
+            <Share className="h-4 w-4" />
+            مشاركة
+          </Button>
+          
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (customerLocation) {
+                const encodedAddress = encodeURIComponent(customerLocation);
+                const url = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+                window.open(url, '_blank');
+              }
+            }}
+            className="gap-2"
+          >
+            <Navigation className="h-4 w-4" />
+            الخريطة
+          </Button>
+        </div>
         {/* Location Info */}
         {customerLocation && (
-          <div className="bg-muted/50 p-3 rounded-lg">
+          <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
             <div className="flex items-center gap-2 mb-1">
               <MapPin className="h-4 w-4 text-primary" />
               <span className="text-sm font-medium">عنوان التوصيل:</span>
@@ -214,7 +270,7 @@ export function DriverCommunication({ driver, orderNumber, customerLocation }: D
         )}
 
         {/* Order Number */}
-        <div className="bg-primary/10 p-3 rounded-lg text-center">
+        <div className="bg-gradient-to-r from-orange-100 to-red-100 p-3 rounded-lg text-center border border-orange-200">
           <div className="flex items-center justify-center gap-2">
             <Clock className="h-4 w-4 text-primary" />
             <span className="text-sm font-medium">رقم الطلب:</span>
@@ -263,5 +319,22 @@ export function useDriverCommunication() {
     }
   };
 
-  return { callDriver, messageDriver };
+  const shareOrderDetails = (orderNumber: string, driverName: string) => {
+    const shareData = {
+      title: `طلب رقم ${orderNumber}`,
+      text: `تفاصيل الطلب مع السائق ${driverName}`,
+      url: window.location.href
+    };
+    
+    if (navigator.share) {
+      navigator.share(shareData);
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      toast({
+        title: 'تم نسخ رابط الطلب',
+        description: 'يمكنك مشاركة الرابط مع الآخرين',
+      });
+    }
+  };
+  return { callDriver, messageDriver, shareOrderDetails };
 }
