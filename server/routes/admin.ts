@@ -899,16 +899,15 @@ router.put("/settings/:key", async (req, res) => {
 // إعدادات واجهة المستخدم (متاحة للعامة)
 router.get("/ui-settings", async (req, res) => {
   try {
-    // TEMPORARY FIX: Return sample UI settings
-    console.log('TEMPORARY FIX: Returning sample UI settings from admin.ts');
-    const settings = [
-      { id: '1', key: 'app_name', value: 'تطبيق السريع ون', category: 'general', isActive: true },
-      { id: '2', key: 'delivery_fee', value: '5.00', category: 'pricing', isActive: true },
-      { id: '3', key: 'minimum_order', value: '20.00', category: 'pricing', isActive: true }
-    ];
+    const settings = await db
+      .select()
+      .from(schema.systemSettings)
+      .where(eq(schema.systemSettings.isActive, true))
+      .orderBy(schema.systemSettings.category, schema.systemSettings.key);
     
     res.json(settings);
   } catch (error) {
+    console.error("خطأ في جلب إعدادات واجهة المستخدم:", error);
     res.status(500).json({ error: "خطأ في الخادم" });
   }
 });
