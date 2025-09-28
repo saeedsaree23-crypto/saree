@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useLocation } from 'wouter';
-import { ArrowRight, Search, Package, MapPin, Clock, Phone, User } from 'lucide-react';
+import { ArrowRight, Search, Package, MapPin, Clock, Phone, User, RefreshCw, Bell, Navigation } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
+import { useQuery } from '@tanstack/react-query';
 
 interface QuickOrder {
   id: string;
@@ -22,24 +24,40 @@ export default function TrackOrdersPage() {
   const [searchOrderNumber, setSearchOrderNumber] = useState('');
   const [searchedOrder, setSearchedOrder] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now());
 
-  // Mock active orders - would come from API in real app
-  const [activeOrders] = useState<QuickOrder[]>([
-    {
-      id: '1',
-      orderNumber: 'ORD001',
-      restaurantName: 'مطعم الزعتر الأصيل',
-      status: 'on_way',
-      estimatedTime: '25 دقيقة'
+  // جلب الطلبات النشطة من قاعدة البيانات مع تحديث تلقائي
+  const customerPhone = '+967771234567'; // في التطبيق الحقيقي سيأتي من نظام المصادقة
+  
+  const { data: activeOrders = [], isLoading: activeOrdersLoading, refetch: refetchActiveOrders } = useQuery<QuickOrder[]>({
+    queryKey: ['active-orders', customerPhone],
+    queryFn: async () => {
+      const response = await fetch(`/api/orders/customer/${encodeURIComponent(customerPhone)}`);
+      if (!response.ok) throw new Error('فشل في جلب الطلبات النشطة');
+      const data = await response.json();
+      
+      // فلترة الطلبات النشطة فقط
+      const activeStatuses = ['pending', 'confirmed', 'preparing', 'on_way'];
+      const activeOrders = data.filter((order: any) => activeStatuses.includes(order.status));
+      
+      setLastUpdateTime(Date.now());
+      
+      return activeOrders.map((order: any) => ({
+        id: order.id,
+        orderNumber: order.orderNumber || order.id.slice(0, 8),
+        restaurantName: order.restaurantName || 'مطعم غير معروف',
+        status: order.status,
+        estimatedTime: order.estimatedTime,
+        totalAmount: order.totalAmount,
+        deliveryAddress: order.deliveryAddress,
+        customerPhone: order.customerPhone,
+        driverName: order.driverName,
+        driverPhone: order.driverPhone
+      }));
     },
-    {
-      id: '2',
-      orderNumber: 'ORD004',
-      restaurantName: 'مطعم الحمرا الشعبي',
-      status: 'preparing',
-      estimatedTime: '45 دقيقة'
-    }
-  ]);
+    refetchInterval: 5000, // تحديث كل 5 ثوانِ للطلبات النشطة
+    retry: 1
+  });
 
   const handleSearchOrder = async () => {
     if (!searchOrderNumber.trim()) {
@@ -53,36 +71,35 @@ export default function TrackOrdersPage() {
 
     setIsSearching(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      // Mock search result
-      if (searchOrderNumber === 'ORD001' || searchOrderNumber === 'ORD002') {
-        setSearchedOrder({
-          id: searchOrderNumber,
-          orderNumber: searchOrderNumber,
-          restaurantName: 'مطعم الزعتر الأصيل',
-          customerName: 'محمد أحمد',
-          deliveryAddress: 'صنعاء، شارع الزبيري',
-          status: searchOrderNumber === 'ORD001' ? 'on_way' : 'delivered',
-          estimatedTime: searchOrderNumber === 'ORD001' ? '25 دقيقة' : undefined,
-          driverName: searchOrderNumber === 'ORD001' ? 'أحمد محمد' : undefined,
-          driverPhone: searchOrderNumber === 'ORD001' ? '+967771234567' : undefined,
-          items: [
-            { name: 'عربكة بالقشطة والعسل', quantity: 2, price: 55 },
-            { name: 'شاي كرك', quantity: 1, price: 8 }
-          ],
-          total: 118
+    try {
+      // البحث في قاعدة البيانات
+      const response = await fetch(`/api/orders/search?orderNumber=${encodeURIComponent(searchOrderNumber)}&customerPhone=${encodeURIComponent(customerPhone)}`);
+      
+      if (response.ok) {
+        const order = await response.json();
+        setSearchedOrder(order);
+        toast({
+          title: "تم العثور على الطلب",
+          description: `طلب ${order.orderNumber} - ${order.restaurantName}`,
         });
       } else {
         setSearchedOrder(null);
         toast({
           title: "طلب غير موجود",
-          description: "لم يتم العثور على طلب بهذا الرقم",
+          description: "لم يتم العثور على طلب بهذا الرقم أو أنه لا يخصك",
           variant: "destructive",
         });
       }
+    } catch (error) {
+      console.error('خطأ في البحث:', error);
+      toast({
+        title: "خطأ في البحث",
+        description: "حدث خطأ أثناء البحث عن الطلب",
+        variant: "destructive",
+      });
+    } finally {
       setIsSearching(false);
-    }, 1000);
+    }
   };
 
   const getStatusLabel = (status: string) => {
@@ -196,16 +213,39 @@ export default function TrackOrdersPage() {
         {activeOrders.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
                 <Clock className="h-5 w-5" />
                 الطلبات النشطة
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-xs text-green-600">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span>تحديث مباشر</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refetchActiveOrders()}
+                    disabled={activeOrdersLoading}
+                  >
+                    <RefreshCw className={`h-3 w-3 ${activeOrdersLoading ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {activeOrdersLoading && (
+                <div className="text-center py-4">
+                  <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-blue-500" />
+                  <p className="text-sm text-gray-500">جاري تحديث الطلبات...</p>
+                </div>
+              )}
+              
               {activeOrders.map((order) => (
                 <div 
                   key={order.id}
-                  className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                  className="p-4 border rounded-lg hover:bg-gray-50 cursor-pointer transition-all duration-200 hover:shadow-md"
                   onClick={() => handleViewFullTracking(order.id)}
                   data-testid={`order-card-${order.id}`}
                 >
@@ -213,16 +253,68 @@ export default function TrackOrdersPage() {
                     <div>
                       <h3 className="font-semibold">{order.restaurantName}</h3>
                       <p className="text-sm text-gray-500">طلب رقم: {order.orderNumber}</p>
+                      {order.totalAmount && (
+                        <p className="text-sm font-medium text-green-600">
+                          المجموع: {order.totalAmount} ريال
+                        </p>
+                      )}
                     </div>
-                    <Badge className={`${getStatusColor(order.status)} text-white`}>
-                      {getStatusLabel(order.status)}
-                    </Badge>
+                    <div className="text-left">
+                      <Badge className={`${getStatusColor(order.status)} text-white`}>
+                        {getStatusLabel(order.status)}
+                      </Badge>
+                      {order.status === 'on_way' && (
+                        <div className="mt-1">
+                          <Progress value={75} className="w-20 h-2" />
+                        </div>
+                      )}
+                    </div>
                   </div>
                   
-                  {order.estimatedTime && (
-                    <div className="flex items-center gap-1 text-sm text-blue-600">
+                  <div className="flex items-center justify-between text-sm">
+                    {order.estimatedTime && (
+                      <div className="flex items-center gap-1 text-blue-600">
                       <Clock className="h-4 w-4" />
                       <span>الوقت المتوقع: {order.estimatedTime}</span>
+                      </div>
+                    )}
+                    
+                    {order.driverName && (
+                      <div className="flex items-center gap-1 text-green-600">
+                        <User className="h-4 w-4" />
+                        <span>السائق: {order.driverName}</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* أزرار سريعة للطلبات النشطة */}
+                  {order.status === 'on_way' && order.driverPhone && (
+                    <div className="flex gap-2 mt-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.open(`tel:${order.driverPhone}`);
+                        }}
+                        className="flex-1"
+                      >
+                        <Phone className="h-3 w-3 mr-1" />
+                        اتصال بالسائق
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const encodedAddress = encodeURIComponent(order.deliveryAddress || '');
+                          window.open(`https://www.google.com/maps/search/?api=1&query=${encodedAddress}`, '_blank');
+                        }}
+                        className="flex-1"
+                      >
+                        <Navigation className="h-3 w-3 mr-1" />
+                        عرض الموقع
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -307,11 +399,22 @@ export default function TrackOrdersPage() {
             <strong>نصائح للمتابعة:</strong>
             <ul className="mt-2 text-sm space-y-1">
               <li>• احتفظ برقم الطلب للمتابعة السريعة</li>
-              <li>• ستصلك إشعارات عند تغير حالة الطلب</li>
+              <li>• ستصلك إشعارات فورية عند تغير حالة الطلب</li>
               <li>• يمكنك الاتصال بالسائق عند وصوله</li>
+              <li>• التحديث التلقائي مفعل كل 5 ثوانِ للطلبات النشطة</li>
             </ul>
           </AlertDescription>
         </Alert>
+        
+        {/* مؤشر آخر تحديث */}
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="flex items-center justify-center gap-2 text-sm text-green-600">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span>آخر تحديث: {new Date(lastUpdateTime).toLocaleTimeString('ar-YE')}</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

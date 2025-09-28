@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useLocation } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Package, Clock, CheckCircle, XCircle, Eye, Loader } from 'lucide-react';
+import { ArrowRight, Package, Clock, CheckCircle, XCircle, Eye, Loader, RefreshCw, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 
 interface Order {
@@ -46,21 +47,22 @@ export default function OrdersPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [selectedTab, setSelectedTab] = useState<'all' | 'active' | 'completed' | 'cancelled'>('all');
+  const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now());
 
-  // Use a demo customer ID for testing - in real app this would come from authentication context
-  const customerId = 'demo-customer-id';
+  // استخدام رقم هاتف تجريبي للعميل - في التطبيق الحقيقي سيأتي من نظام المصادقة
+  const customerPhone = '+967771234567';
 
-  // Fetch orders from database
-  const { data: orders = [], isLoading, error } = useQuery<Order[]>({
-    queryKey: ['orders', customerId],
+  // جلب الطلبات من قاعدة البيانات مع تحديث تلقائي
+  const { data: orders = [], isLoading, error, refetch } = useQuery<Order[]>({
+    queryKey: ['orders', customerPhone],
     queryFn: async () => {
-      const response = await fetch(`/api/customers/${customerId}/orders`);
+      const response = await fetch(`/api/orders/customer/${encodeURIComponent(customerPhone)}`);
       if (!response.ok) {
         throw new Error('فشل في جلب الطلبات');
       }
       const data = await response.json();
       
-      // Process each order to parse items and fetch restaurant name
+      // معالجة كل طلب لتحليل العناصر وجلب اسم المطعم
       const processedOrders = await Promise.all(data.map(async (order: Order) => {
         let parsedItems: OrderItem[] = [];
         try {
@@ -69,7 +71,7 @@ export default function OrdersPage() {
           console.error('خطأ في تحليل عناصر الطلب:', e);
         }
         
-        // Try to get restaurant name from items if not available
+        // محاولة الحصول على اسم المطعم من العناصر إذا لم يكن متوفراً
         let restaurantName = order.restaurantName;
         if (!restaurantName && parsedItems.length > 0 && parsedItems[0].restaurantName) {
           restaurantName = parsedItems[0].restaurantName;
@@ -84,65 +86,15 @@ export default function OrdersPage() {
         };
       }));
       
+      setLastUpdateTime(Date.now());
       return processedOrders;
     },
-    retry: 1
+    retry: 1,
+    refetchInterval: 10000, // تحديث كل 10 ثوانِ
   });
 
-  // Mock fallback orders for demo if no orders in database
-  const fallbackOrders: Order[] = [
-    {
-      id: '1',
-      orderNumber: 'ORD001',
-      customerName: 'عميل تجريبي',
-      customerPhone: '123456789',
-      customerEmail: 'demo@example.com',
-      deliveryAddress: 'صنعاء، حي السبعين',
-      notes: 'طلب تجريبي',
-      paymentMethod: 'cash',
-      items: JSON.stringify([{ name: 'عربكة بالقشطة والعسل', quantity: 2, price: 55 }, { name: 'شاي كرك', quantity: 1, price: 8 }]),
-      subtotal: '118',
-      deliveryFee: '5',
-      total: '123',
-      totalAmount: '123',
-      restaurantId: 'demo-restaurant',
-      restaurantName: 'مطعم الزعتر الأصيل',
-      status: 'on_way' as const,
-      createdAt: new Date(Date.now() - 30 * 60000).toISOString(),
-      updatedAt: new Date(Date.now() - 30 * 60000).toISOString(),
-      estimatedTime: '25 دقيقة',
-      driverEarnings: '10',
-      customerId: 'demo-customer-id',
-      parsedItems: [{ name: 'عربكة بالقشطة والعسل', quantity: 2, price: 55 }, { name: 'شاي كرك', quantity: 1, price: 8 }]
-    },
-    {
-      id: '2',
-      orderNumber: 'ORD002',
-      customerName: 'عميل تجريبي',
-      customerPhone: '123456789',
-      customerEmail: 'demo@example.com',
-      deliveryAddress: 'صنعاء، شارع الزبيري',
-      notes: 'طلب تجريبي',
-      paymentMethod: 'cash',
-      items: JSON.stringify([{ name: 'برياني لحم', quantity: 1, price: 45 }, { name: 'سلطة يوغرت', quantity: 1, price: 12 }]),
-      subtotal: '57',
-      deliveryFee: '5',
-      total: '62',
-      totalAmount: '62',
-      restaurantId: 'demo-restaurant-2',
-      restaurantName: 'مطعم البخاري الملكي',
-      status: 'delivered' as const,
-      createdAt: new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString(),
-      updatedAt: new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString(),
-      estimatedTime: '30 دقيقة',
-      driverEarnings: '8',
-      customerId: 'demo-customer-id',
-      parsedItems: [{ name: 'برياني لحم', quantity: 1, price: 45 }, { name: 'سلطة يوغرت', quantity: 1, price: 12 }]
-    }
-  ];
-
-  // Use database orders if available, otherwise use fallback
-  const displayOrders = orders.length > 0 ? orders : fallbackOrders;
+  // استخدام الطلبات من قاعدة البيانات مباشرة
+  const displayOrders = orders;
 
   const getStatusLabel = (status: string) => {
     const statusMap = {
@@ -257,6 +209,24 @@ export default function OrdersPage() {
 
       {/* Tabs */}
       <div className="max-w-md mx-auto p-4">
+        {/* مؤشر التحديث التلقائي */}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-green-600">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span>آخر تحديث: {new Date(lastUpdateTime).toLocaleTimeString('ar-YE')}</span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isLoading}
+            className="gap-2"
+          >
+            <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
+            تحديث
+          </Button>
+        </div>
+
         <Tabs value={selectedTab} onValueChange={(value) => setSelectedTab(value as any)}>
           <TabsList className="grid w-full grid-cols-4 mb-6">
             {tabs.map((tab) => (
@@ -278,27 +248,43 @@ export default function OrdersPage() {
 
           <TabsContent value={selectedTab} className="space-y-4">
             {filteredOrders.length === 0 ? (
-              <Card>
-                <CardContent className="text-center py-12">
-                  <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">لا توجد طلبات</h3>
-                  <p className="text-gray-500 mb-4">لم تقم بأي طلبات بعد</p>
-                  <Button onClick={() => setLocation('/')} data-testid="button-start-ordering">
-                    ابدأ الطلب الآن
-                  </Button>
-                </CardContent>
-              </Card>
+              <div className="space-y-4">
+                <Alert>
+                  <Bell className="h-4 w-4" />
+                  <AlertDescription>
+                    {isLoading ? 'جاري تحميل طلباتك...' : 
+                     error ? 'حدث خطأ في تحميل الطلبات. يرجى المحاولة مرة أخرى.' :
+                     'لا توجد طلبات حالياً. ستظهر طلباتك هنا عند إنشائها.'}
+                  </AlertDescription>
+                </Alert>
+                
+                {!isLoading && !error && (
+                  <Card>
+                    <CardContent className="text-center py-12">
+                      <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">لا توجد طلبات</h3>
+                      <p className="text-gray-500 mb-4">لم تقم بأي طلبات بعد</p>
+                      <Button onClick={() => setLocation('/')} data-testid="button-start-ordering">
+                        ابدأ الطلب الآن
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             ) : (
               filteredOrders.map((order) => {
                 const StatusIcon = getStatusIcon(order.status);
                 
                 return (
-                  <Card key={order.id} className="overflow-hidden">
+                  <Card key={order.id} className="overflow-hidden hover:shadow-md transition-shadow">
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <div>
                           <CardTitle className="text-lg font-bold">{order.restaurantName}</CardTitle>
                           <p className="text-sm text-gray-500">طلب رقم: {order.orderNumber}</p>
+                          <p className="text-xs text-gray-400">
+                            {new Date(order.createdAt).toLocaleString('ar-YE')}
+                          </p>
                         </div>
                         <Badge 
                           className={`${getStatusColor(order.status)} text-white`}
@@ -341,6 +327,14 @@ export default function OrdersPage() {
                           <span>العنوان: {order.deliveryAddress}</span>
                           <span>الدفع: {order.paymentMethod === 'cash' ? 'نقدي' : 'إلكتروني'}</span>
                         </div>
+                        
+                        {/* مؤشر التحديث المباشر للطلبات النشطة */}
+                        {['pending', 'confirmed', 'preparing', 'on_way'].includes(order.status) && (
+                          <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                            <span>تحديث مباشر مفعل</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Action Buttons */}
@@ -353,7 +347,7 @@ export default function OrdersPage() {
                           data-testid={`button-view-order-${order.id}`}
                         >
                           <Eye className="w-4 h-4 mr-1" />
-                          تتبع الطلب
+                          {['pending', 'confirmed', 'preparing', 'on_way'].includes(order.status) ? 'تتبع مباشر' : 'عرض التفاصيل'}
                         </Button>
                         
                         {order.status === 'delivered' && (
