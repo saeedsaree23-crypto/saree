@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Plus, Edit, Trash2, Save, X, Percent } from 'lucide-react';
+import ImageUpload from '@/components/ImageUpload';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -235,12 +236,13 @@ export function AdminSpecialOffers() {
                 </div>
                 
                 <div>
-                  <Label htmlFor="image">رابط الصورة (اختياري)</Label>
-                  <Input
-                    id="image"
+                  <ImageUpload
+                    label="صورة العرض (اختياري)"
                     value={formData.image}
-                    onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                    placeholder="https://example.com/image.jpg"
+                    onChange={(url) => setFormData({ ...formData, image: url })}
+                    bucket="offers"
+                    required={false}
+                    data-testid="input-special-offer-image"
                   />
                 </div>
               </div>

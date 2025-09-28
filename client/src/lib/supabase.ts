@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Get Supabase credentials from environment
-const supabaseUrl = (import.meta.env?.VITE_SUPABASE_URL as string) || '';
-const supabaseAnonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY as string) || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
@@ -20,7 +20,8 @@ export async function uploadImage(file: File, bucket: string = 'images'): Promis
     // Generate unique filename
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-    const filePath = `${bucket}/${fileName}`;
+    // Fix: Use relative path without duplicating bucket name
+    const filePath = fileName;
 
     // Upload file to Supabase Storage
     const { data, error } = await supabase.storage
