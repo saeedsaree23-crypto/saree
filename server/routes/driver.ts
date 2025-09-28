@@ -1,6 +1,7 @@
 import express from "express";
 import { storage } from "../storage";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 
 const router = express.Router();
 
@@ -28,37 +29,111 @@ router.get("/dashboard", async (req, res) => {
     
     // حساب الإحصائيات
     const today = new Date().toDateString();
+    const thisWeek = new Date();
+    thisWeek.setDate(thisWeek.getDate() - 7);
+    const thisMonth = new Date();
+    thisMonth.setMonth(thisMonth.getMonth() - 1);
+    
     const todayOrders = driverOrders.filter(order => 
       order.createdAt.toDateString() === today
     );
+    const weeklyOrders = driverOrders.filter(order => 
+      order.createdAt >= thisWeek
+    );
+    const monthlyOrders = driverOrders.filter(order => 
+      order.createdAt >= thisMonth
+    );
+    
     const completedToday = todayOrders.filter(order => order.status === "delivered");
+    const completedWeekly = weeklyOrders.filter(order => order.status === "delivered");
+    const completedMonthly = monthlyOrders.filter(order => order.status === "delivered");
+    const totalCompleted = driverOrders.filter(order => order.status === "delivered");
+    const totalCancelled = driverOrders.filter(order => order.status === "cancelled");
+    
     const totalEarnings = driverOrders
       .filter(order => order.status === "delivered")
       .reduce((sum, order) => sum + parseFloat(order.driverEarnings || "0"), 0);
     const todayEarnings = completedToday
       .reduce((sum, order) => sum + parseFloat(order.driverEarnings || "0"), 0);
+    const weeklyEarnings = completedWeekly
+      .reduce((sum, order) => sum + parseFloat(order.driverEarnings || "0"), 0);
+    const monthlyEarnings = completedMonthly
+      .reduce((sum, order) => sum + parseFloat(order.driverEarnings || "0"), 0);
 
     // الطلبات المتاحة (غير مُعيَّنة لسائق)
     const availableOrders = allOrders
       .filter(order => order.status === "confirmed" && !order.driverId)
+      .map(order => {
+        const totalAmount = parseFloat(order.totalAmount || '0');
+        const estimatedEarnings = Math.round(totalAmount * 0.15);
+        const orderAge = Date.now() - new Date(order.createdAt).getTime();
+        const ageInMinutes = orderAge / (1000 * 60);
+        
+        // تحديد أولوية الطلب
+        let priority: 'high' | 'medium' | 'low' = 'medium';
+        if (totalAmount > 100 || ageInMinutes > 15) {
+          priority = 'high';
+        } else if (totalAmount < 50 && ageInMinutes < 5) {
+          priority = 'low';
+        }
+        
+        return {
+          ...order,
+          estimatedEarnings,
+          priority,
+          ageInMinutes: Math.round(ageInMinutes)
+        };
+      })
+      .sort((a, b) => {
+        // ترتيب حسب الأولوية ثم الوقت
+        const priorityOrder = { high: 3, medium: 2, low: 1 };
+        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+          return priorityOrder[b.priority] - priorityOrder[a.priority];
+        }
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      })
       .slice(0, 10);
 
     // الطلبات الحالية للسائق
     const currentOrders = driverOrders.filter(order => 
-      order.status === "picked_up" || order.status === "ready"
+      ["preparing", "ready", "picked_up", "on_way"].includes(order.status || "")
     );
 
+    // حساب متوسط وقت التوصيل
+    const deliveredOrdersWithTime = totalCompleted.filter(order => 
+      order.acceptedAt && order.deliveredAt
+    );
+    const averageDeliveryTime = deliveredOrdersWithTime.length > 0 ?
+      deliveredOrdersWithTime.reduce((sum, order) => {
+        const acceptedTime = new Date(order.acceptedAt!).getTime();
+        const deliveredTime = new Date(order.deliveredAt!).getTime();
+        return sum + (deliveredTime - acceptedTime);
+      }, 0) / deliveredOrdersWithTime.length / (1000 * 60) : 0; // في الدقائق
+
+    // حساب معدل النجاح
+    const successRate = driverOrders.length > 0 ? 
+      Math.round((totalCompleted.length / driverOrders.length) * 100) : 0;
     res.json({
       stats: {
         todayOrders: todayOrders.length,
         todayEarnings,
+        weeklyOrders: weeklyOrders.length,
+        weeklyEarnings,
+        monthlyOrders: monthlyOrders.length,
+        monthlyEarnings,
         completedToday: completedToday.length,
         totalOrders: driverOrders.length,
         totalEarnings,
-        averageRating: 4.5 // قيمة افتراضية حتى يتم تنفيذ نظام التقييم
+        completedOrders: totalCompleted.length,
+        cancelledOrders: totalCancelled.length,
+        averageRating: 4.8, // قيمة افتراضية حتى يتم تنفيذ نظام التقييم
+        averageDeliveryTime: Math.round(averageDeliveryTime),
+        successRate
       },
       availableOrders,
-      currentOrders
+      currentOrders,
+      driverLocation: driver.currentLocation,
+      lastActiveAt: new Date().toISOString()
     });
   } catch (error) {
     console.error("خطأ في لوحة معلومات السائق:", error);
@@ -205,7 +280,7 @@ router.get("/orders", async (req, res) => {
 // إحصائيات السائق
 router.get("/stats", async (req, res) => {
   try {
-    const { driverId } = req.query;
+    const { driverId, period = 'today' } = req.query;
     
     if (!driverId || typeof driverId !== 'string') {
       return res.status(400).json({ error: "معرف السائق مطلوب" });
@@ -220,31 +295,61 @@ router.get("/stats", async (req, res) => {
     // جلب طلبات السائق
     const allOrders = await storage.getOrders();
     const driverOrders = allOrders.filter(order => order.driverId === driverId);
-    const deliveredOrders = driverOrders.filter(order => order.status === "delivered");
     
-    // حساب الإحصائيات
+    // تحديد الفترة الزمنية
+    let startDate: Date;
+    const endDate = new Date();
+    
+    switch (period) {
+      case 'today':
+        startDate = new Date();
+        startDate.setHours(0, 0, 0, 0);
+        break;
+      case 'week':
+        startDate = new Date();
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case 'month':
+        startDate = new Date();
+        startDate.setMonth(startDate.getMonth() - 1);
+        break;
+      case 'total':
+      default:
+        startDate = new Date(0); // من البداية
+        break;
+    }
+    
+    // فلترة الطلبات حسب الفترة
+    const periodOrders = driverOrders.filter(order => 
+      order.createdAt >= startDate && order.createdAt <= endDate
+    );
+    const deliveredOrders = periodOrders.filter(order => order.status === "delivered");
+    const cancelledOrders = periodOrders.filter(order => order.status === "cancelled");
+    
+    // حساب الإحصائيات المحسنة
     const totalEarnings = deliveredOrders.reduce((sum, order) => 
       sum + parseFloat(order.driverEarnings || "0"), 0
     );
     
-    const thisMonth = new Date();
-    thisMonth.setDate(1);
-    const monthlyOrders = deliveredOrders.filter(order => 
-      order.createdAt >= thisMonth
-    );
-    const monthlyEarnings = monthlyOrders.reduce((sum, order) => 
-      sum + parseFloat(order.driverEarnings || "0"), 0
-    );
+    // حساب متوسط قيمة الطلب
+    const avgOrderValue = deliveredOrders.length > 0 ? 
+      totalEarnings / deliveredOrders.length : 0;
+    
+    // حساب معدل النجاح
+    const successRate = periodOrders.length > 0 ? 
+      Math.round((deliveredOrders.length / periodOrders.length) * 100) : 0;
 
     res.json({
-      totalOrders: driverOrders.length,
+      totalOrders: periodOrders.length,
       completedOrders: deliveredOrders.length,
+      cancelledOrders: cancelledOrders.length,
       totalEarnings,
-      monthlyOrders: monthlyOrders.length,
-      monthlyEarnings,
-      averageRating: 4.5, // قيمة افتراضية
-      successRate: driverOrders.length > 0 ? 
-        Math.round((deliveredOrders.length / driverOrders.length) * 100) : 0
+      avgOrderValue,
+      averageRating: 4.8, // قيمة افتراضية
+      successRate,
+      period,
+      startDate,
+      endDate
     });
   } catch (error) {
     console.error("خطأ في جلب إحصائيات السائق:", error);
